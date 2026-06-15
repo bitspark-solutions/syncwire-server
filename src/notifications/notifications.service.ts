@@ -18,7 +18,7 @@ export class NotificationsService {
 
   create(dto: CreateNotificationDto): NotificationRecord {
     // Check if notification with same ID already exists to prevent duplication
-    const existingIndex = this.notifications.findIndex(n => n.id === dto.id);
+    const existingIndex = this.notifications.findIndex((n) => n.id === dto.id);
     if (existingIndex !== -1) {
       return this.notifications[existingIndex];
     }

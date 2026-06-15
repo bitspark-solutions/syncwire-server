@@ -1,0 +1,25 @@
+## Caddy reverse proxy for SyncWire in production.
+##
+## Replace `syncwire.example.com` with the real domain. Caddy will obtain
+## and auto-renew a Let's Encrypt cert on first start.
+##
+## Two upstreams:
+##   - REST API   → app:8080
+##   - MQTT-over-WS → emqx:8083 (for the web client)
+
+syncwire.example.com {
+    encode gzip zstd
+
+    # REST control plane
+    reverse_proxy app:8080
+
+    # MQTT over WebSocket (the web client connects here)
+    @mqtt {
+        path /mqtt
+        header Connection *Upgrade*
+        header Upgrade websocket
+    }
+    reverse_proxy @mqtt emqx:8083
+
+    # Healthcheck passthrough is covered by /reverse_proxy above.
+}

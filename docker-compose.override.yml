@@ -1,0 +1,26 @@
+## docker-compose.override.yml
+##
+## Auto-loaded by `docker compose up` in dev. Adds hot-reload, bind-mounts
+## for live source editing, the Node debug port, and dev-friendly healthcheck
+## intervals. Stripped in prod by the override chain below.
+
+services:
+  app:
+    build:
+      target: builder
+    command: dumb-init -- sh -c "npm run start:dev"
+    working_dir: /app
+    volumes:
+      - ./src:/app/src:ro
+      - ./tsconfig.json:/app/tsconfig.json:ro
+      - ./tsconfig.build.json:/app/tsconfig.build.json:ro
+      - ./nest-cli.json:/app/nest-cli.json:ro
+      # node_modules stays inside the image (not bind-mounted) so the host's
+      # node_modules doesn't fight with the container's. Hot-reload watches
+      # /app/src and tsconfig changes.
+    ports:
+      - "9229:9229" # Node --inspect (nest start --debug)
+    environment:
+      NODE_ENV: development
+    healthcheck:
+      start_period: 60s # give nest start --watch time to compile
