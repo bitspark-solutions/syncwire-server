@@ -1,98 +1,146 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# SyncWire Server
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+A realtime notification relay: capture SMS and system notifications on one Android device and mirror them to another Android device or a web dashboard.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+> Status: v0 — under active development. The current `src/` is a NestJS scaffold with an in-memory notification store. The architecture is being migrated to MQTT (EMQX) with a NestJS bridge, REST control plane, and Postgres persistence. See [`.plan/2026-06-16_plan.md`](./.plan/2026-06-16_plan.md) for the full design and phased rollout.
 
-## Description
+---
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## What it does
 
-## Project setup
+Phone A has the SyncWire Android app. The app reads its own SMS messages and listens to system notifications, then forwards them to this server. The server fans them out to Phone B (or a web client) that the owner of Phone A has paired it with.
 
-```bash
-$ npm install
+Use cases:
+- See your phone's notifications on a tablet, laptop, or second phone
+- Keep a single dashboard of SMS messages from multiple phones (e.g. a shared work number)
+- Mirror one phone to another for testing, accessibility, or development
+
+---
+
+## Goals (v1)
+
+- **Pairing** — pair any two devices (or a device and a web session) with a short code, no accounts friction
+- **Realtime relay** — sub-second delivery from source to viewer
+- **Offline resilience** — messages queued for offline viewers, catch-up on reconnect via history API
+- **Presence** — each device's online/offline status visible to its paired peers
+- **Multi-source, multi-viewer** — one source can fan out to many viewers; one viewer can aggregate many sources
+- **Self-hostable** — runs as a single Docker Compose stack (server + Postgres + EMQX)
+
+## Non-goals (v1)
+
+- iOS client
+- End-to-end encryption of notification content (server-readable in v1; E2E is a v1.1 follow-up)
+- Group / team / organization accounts
+- Cross-region data residency
+- FCM push fallback for very-long-offline viewers
+
+See the [plan](./.plan/2026-06-16_plan.md) §1 and §13 for the full scope and phasing.
+
+---
+
+## How it works
+
+```
+┌──────────┐    MQTT publish     ┌──────────┐    MQTT publish     ┌──────────┐
+│ Phone A  │ ──────────────────► │  Server  │ ──────────────────► │ Phone B  │
+│ (source) │   relay/<src>       │  EMQX +  │   inbox/<viewer>   │ (viewer) │
+│ Android  │                     │  NestJS  │                    │ Android  │
+└──────────┘                     └──────────┘                    └──────────┘
+                                      │
+                                      │ REST: /api/auth, /api/pairings,
+                                      │       /api/devices, /api/notifications
+                                      ▼
+                                 ┌──────────┐
+                                 │ Postgres │
+                                 └──────────┘
 ```
 
-## Compile and run the project
+- **Data plane (MQTT):** notifications flow over MQTT topics. EMQX handles routing, queueing, presence (LWT), and per-device ACLs.
+- **Control plane (REST/HTTP):** auth, pairing, device management, history query.
+- **Bridge service (NestJS):** subscribes to inbound MQTT, persists to Postgres, fans out to each paired viewer's inbox topic.
+- **Clients:** Android app (companion repo) and a separate web client repo. Both consume the same wire contracts defined in the plan.
 
-```bash
-# development
-$ npm run start
+See [`.plan/2026-06-16_plan.md`](./.plan/2026-06-16_plan.md) for the full design — topic layout, message contracts, data model, edge cases, and security model.
 
-# watch mode
-$ npm run start:dev
+---
 
-# production mode
-$ npm run start:prod
+## Repository layout
+
+```
+syncwire-server/
+├── .plan/                # design documents and rollout plans
+├── src/
+│   ├── main.ts           # bootstrap
+│   ├── app.module.ts     # module wiring
+│   ├── notifications/    # current feature module (HTTP + persistence)
+│   └── ...               # auth, devices, pairings, mqtt, prisma (added per phase)
+├── test/                 # e2e tests
+├── prisma/               # schema + migrations (added in phase 1)
+├── deploy/               # docker-compose, EMQX config (added in phase 2)
+└── ...
 ```
 
-## Run tests
+The current `src/` reflects pre-phase-0 state. The plan in `.plan/` describes the target layout.
+
+---
+
+## Tech stack
+
+| Layer | Choice |
+|---|---|
+| HTTP framework | NestJS 11 (TypeScript) |
+| MQTT broker | EMQX 5.x (self-hosted) |
+| MQTT client (server) | mqtt.js |
+| Database | Postgres 16 |
+| ORM | Prisma |
+| Auth | JWT (HS256) with rotating refresh tokens |
+| Validation | class-validator, zod (for env) |
+| Testing | Jest, supertest, mqtt.js test client |
+| Container | Docker, Docker Compose |
+| TLS | Caddy in front of EMQX (production) |
+
+---
+
+## Getting started
+
+Prerequisites: Node 20.10+, Docker (for the broker + DB stack).
 
 ```bash
-# unit tests
-$ npm run test
+# install
+npm install
 
-# e2e tests
-$ npm run test:e2e
+# copy env template and edit
+cp .env.example .env
 
-# test coverage
-$ npm run test:cov
+# run tests
+npm run test
+
+# start the server (current scaffold: HTTP only, no MQTT yet)
+npm run start:dev
 ```
 
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+Once the MQTT migration is in (phase 2 onward), the full stack runs via:
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+docker compose -f deploy/docker-compose.yml up
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+---
 
-## Resources
+## Environment variables
 
-Check out a few resources that may come in handy when working with NestJS:
+See `.env.example` for the current template. The plan specifies the full set: database URL, JWT signing secret, JWT secret rotation pair, EMQX broker URL, server port, log level, retention window.
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+---
 
-## Support
+## Related repositories
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+- **Android app** — `C:\Users\Mohsin\AndroidStudioProjects\syncwire` (paired via `syncwire.code-workspace`)
+- **Web client** — separate repo (TBD)
+- **Plan / design** — [`.plan/2026-06-16_plan.md`](./.plan/2026-06-16_plan.md)
 
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+---
 
 ## License
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+UNLICENSED (private).
