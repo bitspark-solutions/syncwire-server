@@ -5,9 +5,10 @@ generator client {
   provider = "prisma-client-js"
   // Prisma 7: the default output (node_modules/.prisma/client) is broken
   // for TypeScript imports because of the @prisma/client package.json
-  // `exports` map. Generating into a project-local path and importing
-  // from there is the supported pattern.
-  output   = "../src/prisma/generated/client"
+  // `exports` map. Generating into a project-local path (outside `src/`,
+  // so nest build doesn't try to compile it and the runtime can require
+  // it directly) is the supported pattern.
+  output   = "../prisma/generated/client"
 }
 
 datasource db {

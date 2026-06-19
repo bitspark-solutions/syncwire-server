@@ -3,8 +3,9 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaPg } from '@prisma/adapter-pg';
 // Prisma 7: the generated client lives at the path set by the generator's
 // `output` in schema.prisma. We import from there (not from `@prisma/client`,
-// which has a broken `exports` map for direct client imports).
-import { PrismaClient } from './generated/client/client';
+// which has a broken `exports` map for direct client imports). The path
+// is relative to the source file: ../../prisma/generated/client/client.
+import { PrismaClient } from '../../prisma/generated/client/client';
 import type { AppEnv } from '../config/env';
 
 /**

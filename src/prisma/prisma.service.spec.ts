@@ -15,7 +15,7 @@ jest.mock('@prisma/adapter-pg', () => ({
 // prisma/schema.prisma). Prisma 7 dropped the `PrismaClient` export from
 // `@prisma/client` directly; the supported pattern is to generate into a
 // project-local path and import from there.
-jest.mock('./generated/client/client', () => {
+jest.mock('../../prisma/generated/client/client', () => {
   // Important: do NOT return an object from the constructor. When the
   // derived class (PrismaService) calls super(), if the parent constructor
   // returns an object it BECOMES the new `this` of the derived class,
