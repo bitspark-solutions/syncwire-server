@@ -14,6 +14,7 @@ export class CreateNotificationDto {
   readonly sender: string;
 
   @IsString()
+  @IsNotEmpty()
   readonly content: string;
 
   @IsNumber()

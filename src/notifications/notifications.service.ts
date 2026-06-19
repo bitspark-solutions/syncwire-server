@@ -40,7 +40,8 @@ export class NotificationsService {
   }
 
   findAll(): NotificationRecord[] {
-    return this.notifications;
+    // Return a copy so callers cannot mutate the internal store
+    return [...this.notifications];
   }
 
   clearAll(): void {

@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1.7
 # ---------- Build stage ----------
-# Installs ALL deps (incl. dev) and compiles TypeScript. The dev override
-# (docker-compose.override.yml) re-uses this stage with `target: builder` so
-# it can run `nest start --watch` — that needs the dev `nest` CLI binary,
-# so we deliberately do NOT prune devDeps here.
+# Installs ALL deps (incl. dev) and compiles TypeScript. Used both for prod
+# images and for the dev workflow (docker-compose.yml's `target: builder`
+# keeps the dev `nest` CLI on PATH so `npm run start:dev` can run
+# `nest start --watch`). We deliberately do NOT prune devDeps here.
 FROM node:24-alpine AS builder
 
 # dumb-init is used as PID 1 in both the runtime and dev (builder-target)
