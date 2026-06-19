@@ -4,7 +4,7 @@
 # (docker-compose.override.yml) re-uses this stage with `target: builder` so
 # it can run `nest start --watch` — that needs the dev `nest` CLI binary,
 # so we deliberately do NOT prune devDeps here.
-FROM node:20-alpine AS builder
+FROM node:24-alpine AS builder
 
 # dumb-init is used as PID 1 in both the runtime and dev (builder-target)
 # configurations. Installing it in the builder keeps the dev override's
@@ -24,7 +24,7 @@ RUN npm run build
 # Fresh `npm ci --omit=dev` here so the final image carries only production
 # dependencies (smaller attack surface, smaller image). The dev path uses the
 # builder stage above, which keeps devDeps.
-FROM node:20-alpine AS runner
+FROM node:24-alpine AS runner
 
 RUN apk add --no-cache dumb-init wget
 

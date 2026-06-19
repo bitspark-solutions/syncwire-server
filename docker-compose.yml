@@ -1,18 +1,48 @@
+# =============================================================================
+# SyncWire — single Docker Compose file (dev workflow)
+# =============================================================================
+#
+# Usage:
+#   docker compose up                 # bring the stack up
+#   docker compose down               # tear it down (keeps volumes)
+#   docker compose down -v            # tear down + nuke volumes
+#
+# Or via the Makefile (preferred):
+#   make up
+#   make down
+#   make logs
+#   make test
+#   make help                         # list all targets
+#
+# This file is the dev workflow. The prod deployment story lives in
+# deploy/ (Caddyfile, EMQX config, etc.) and is wired up in Phase 6
+# (Hardening). For now everything is dev-friendly: hot-reload, debug port,
+# dashboards exposed on the host, in-memory state.
+# =============================================================================
+
 name: syncwire
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     container_name: syncwire-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: syncwire
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-syncwire_dev_only_change_me}
       POSTGRES_DB: syncwire
+      # PG 18+ uses a versioned subdir under the mount point. Setting PGDATA
+      # explicitly is the official pattern (the image's entrypoint also
+      # defaults to /var/lib/postgresql/18/docker, but being explicit avoids
+      # the entrypoint's backwards-compat error on the old /data path).
+      PGDATA: /var/lib/postgresql/18/docker
     volumes:
-      - pg_data:/var/lib/postgresql/data
+      # PG 18+ requires mounting the parent dir, not /data. The image creates
+      # a major-version-specific subdir under the mount point.
+      - pg_data_v18:/var/lib/postgresql
       - ./deploy/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     ports:
+      # Host-side port (overridable). Maps to container port 5432.
       - "127.0.0.1:${PG_HOST_PORT:-15432}:5432"
     healthcheck:
       test:
@@ -30,12 +60,14 @@ services:
     container_name: syncwire-emqx
     restart: unless-stopped
     environment:
-      # Phase 0 dev user — created on first boot. Phase 2 replaces with JWT.
-      EMQX_DASHBOARD__DEFAULT_PASSWORD: syncwire
+      # Phase 0 dev dashboard user. Phase 2 replaces built-in auth with JWT.
+      EMQX_DASHBOARD__DEFAULT_PASSWORD: ${EMQX_DASHBOARD_PASSWORD:-syncwire}
     ports:
-      - "127.0.0.1:${EMQX_MQTT_HOST_PORT:-11883}:1883"   # MQTT (plaintext, internal)
-      - "127.0.0.1:${EMQX_WS_HOST_PORT:-18083}:8083"     # MQTT over WebSocket
-      - "127.0.0.1:${EMQX_DASHBOARD_HOST_PORT:-18084}:18083" # Dashboard (dev only)
+      # 1883 = MQTT (plaintext, internal). 8083 = MQTT-over-WebSocket.
+      # 18083 = Dashboard (dev only — turn off for prod).
+      - "127.0.0.1:${EMQX_MQTT_HOST_PORT:-11883}:1883"
+      - "127.0.0.1:${EMQX_WS_HOST_PORT:-18083}:8083"
+      - "127.0.0.1:${EMQX_DASHBOARD_HOST_PORT:-18084}:18083"
     volumes:
       - emqx_data:/opt/emqx/data
       - emqx_log:/opt/emqx/log
@@ -59,12 +91,20 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # Dev: use the builder stage so the `nest` CLI is on PATH and
+      # `npm run start:dev` works. The runtime stage is used automatically
+      # when you push the image to a registry (multi-arch build).
+      target: builder
     container_name: syncwire-app
     restart: unless-stopped
+    # dumb-init as PID 1 so signals reach the node process; runs
+    # `npm run start:dev` which itself runs `nest start --watch`.
+    command: dumb-init -- sh -c "npm run start:dev"
+    working_dir: /app
     environment:
-      NODE_ENV: ${NODE_ENV:-development}
-      # The in-container port is always 8080 (matches Dockerfile's EXPOSE).
-      # The HOST port is ${PORT:-18080}, mapped via the `ports:` line below.
+      NODE_ENV: development
+      # In-container port is always 8080 (matches Dockerfile's EXPOSE).
+      # The HOST port is ${APP_HOST_PORT:-18080}, mapped via `ports:` below.
       # Do NOT set PORT here — let the app default to 8080.
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # Phase 1+ — uncomment when those modules land
@@ -72,7 +112,15 @@ services:
       # JWT_SECRET: ${JWT_SECRET}
       # EMQX_URL: mqtt://emqx:1883
     ports:
-      - "127.0.0.1:${PORT:-18080}:8080"
+      - "127.0.0.1:${APP_HOST_PORT:-18080}:8080"   # HTTP
+      - "127.0.0.1:9229:9229"                       # Node --inspect (nest --debug)
+    volumes:
+      # Bind-mount source + tsconfig for hot-reload. node_modules stays
+      # inside the image so the host's deps don't fight the container's.
+      - ./src:/app/src:ro
+      - ./tsconfig.json:/app/tsconfig.json:ro
+      - ./tsconfig.build.json:/app/tsconfig.build.json:ro
+      - ./nest-cli.json:/app/nest-cli.json:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -87,7 +135,8 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      # Give nest start --watch time to compile on first boot.
+      start_period: 60s
     networks:
       - syncwire-net
 
@@ -97,8 +146,8 @@ networks:
     name: syncwire-net
 
 volumes:
-  pg_data:
-    name: syncwire-pg-data
+  pg_data_v18:
+    name: syncwire-pg-data-v18
   emqx_data:
     name: syncwire-emqx-data
   emqx_log:
