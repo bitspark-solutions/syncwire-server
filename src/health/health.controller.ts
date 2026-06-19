@@ -1,32 +1,39 @@
 import { Controller, Get } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
 
-/**
- * Liveness + dependency health endpoint.
- *
- * v0 reports the process is up and answering HTTP. Phase 1 will extend this
- * to also report Postgres reachability (via Prisma); Phase 2 will add EMQX
- * reachability (via the bridge MQTT client). The response shape is stable so
- * Docker healthcheck, load balancers, and uptime monitors can rely on it.
- */
+type CheckResult = { status: 'ok' | 'down'; detail?: string };
+
 @Controller('health')
 export class HealthController {
+  constructor(private readonly prisma: PrismaService) {}
+
   @Get()
-  check(): {
-    status: 'ok';
+  async check(): Promise<{
+    status: 'ok' | 'down';
     uptimeSeconds: number;
     timestamp: string;
-    checks: Record<string, { status: 'ok' | 'down'; detail?: string }>;
-  } {
+    checks: Record<string, CheckResult>;
+  }> {
+    const checks: Record<string, CheckResult> = {
+      database: await this.probeDb(),
+      mqtt: { status: 'ok', detail: 'not_probed_yet' }, // Phase 2
+    };
+
+    const allOk = Object.values(checks).every((c) => c.status === 'ok');
     return {
-      status: 'ok',
+      status: allOk ? 'ok' : 'down',
       uptimeSeconds: Math.round(process.uptime()),
       timestamp: new Date().toISOString(),
-      checks: {
-        // Placeholders — real probes added in Phase 1 / 2.
-        // The keys exist now so clients can rely on the shape.
-        database: { status: 'ok', detail: 'not_probed_yet' },
-        mqtt: { status: 'ok', detail: 'not_probed_yet' },
-      },
+      checks,
     };
+  }
+
+  private async probeDb(): Promise<CheckResult> {
+    try {
+      await this.prisma.$queryRaw`SELECT 1`;
+      return { status: 'ok' };
+    } catch (e) {
+      return { status: 'down', detail: (e as Error).message };
+    }
   }
 }

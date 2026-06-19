@@ -86,14 +86,14 @@ services:
       start_period: 30s
     networks:
       - syncwire-net
-
   app:
     build:
       context: .
       dockerfile: Dockerfile
       # Dev: use the builder stage so the `nest` CLI is on PATH and
-      # `npm run start:dev` works. The runtime stage is used automatically
-      # when you push the image to a registry (multi-arch build).
+      # `npm run start:dev` can run `nest start --watch`). The runtime
+      # stage is used automatically when you push the image to a registry
+      # (multi-arch build).
       target: builder
     container_name: syncwire-app
     restart: unless-stopped
@@ -107,10 +107,13 @@ services:
       # The HOST port is ${APP_HOST_PORT:-18080}, mapped via `ports:` below.
       # Do NOT set PORT here — let the app default to 8080.
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      # Phase 1+ — uncomment when those modules land
-      # DATABASE_URL: postgresql://syncwire:***@postgres:5432/syncwire
-      # JWT_SECRET: ${JWT_SECRET}
-      # EMQX_URL: mqtt://emqx:1883
+      # Phase 1+ — Prisma needs the DB URL. In the container this points
+      # at the in-network `postgres` service. On the host (for npm test),
+      # override with localhost via .env or shell env.
+      DATABASE_URL: postgresql://syncwire:***@postgres:5432/syncwire
+      # Phase 1+ — JWT auth. Dev default is a placeholder; replace in
+      # any environment that issues real tokens.
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-do-not-use-in-prod-32bytes-min}
     ports:
       - "127.0.0.1:${APP_HOST_PORT:-18080}:8080"   # HTTP
       - "127.0.0.1:9229:9229"                       # Node --inspect (nest --debug)

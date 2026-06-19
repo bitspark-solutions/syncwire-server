@@ -3,6 +3,21 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
+import { PrismaService } from './../src/prisma/prisma.service';
+
+// e2e tests MUST NOT make real I/O. We override PrismaService in the test
+// module with a mock so the health controller's `SELECT 1` probe never
+// actually hits Postgres. Real DB connectivity is verified separately by
+// curling /api/health against the running docker stack.
+
+const mockPrisma = {
+  $queryRaw: jest.fn().mockResolvedValue([{ '?column?': 1 }]),
+  $connect: jest.fn().mockResolvedValue(undefined),
+  $disconnect: jest.fn().mockResolvedValue(undefined),
+  onModuleInit: jest.fn().mockResolvedValue(undefined),
+  onModuleDestroy: jest.fn().mockResolvedValue(undefined),
+  user: { findMany: jest.fn().mockResolvedValue([]) },
+};
 
 describe('SyncWire API (e2e)', () => {
   let app: INestApplication<App>;
@@ -10,7 +25,10 @@ describe('SyncWire API (e2e)', () => {
   beforeEach(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(PrismaService)
+      .useValue(mockPrisma)
+      .compile();
 
     app = moduleFixture.createNestApplication();
     // Match production: routes are namespaced under /api
@@ -22,7 +40,7 @@ describe('SyncWire API (e2e)', () => {
     await app.close();
   });
 
-  it('GET /api/health returns 200 with the stable shape', () => {
+  it('GET /api/health returns 200 with the stable shape and an ok DB probe', () => {
     return request(app.getHttpServer())
       .get('/api/health')
       .expect(200)
@@ -42,6 +60,14 @@ describe('SyncWire API (e2e)', () => {
         if (!res.body.checks?.mqtt) {
           throw new Error('checks.mqtt missing');
         }
+        // The health controller's probe calls `SELECT 1` via PrismaService.
+        // We mock PrismaService above so this is satisfied without a real DB.
+        const db = res.body.checks.database as { status: string; detail?: string };
+        if (db.status !== 'ok') {
+          throw new Error(
+            `database probe should be ok, got ${db.status} (${db.detail ?? ''})`,
+          );
+        }
       });
   });
 
@@ -51,7 +77,7 @@ describe('SyncWire API (e2e)', () => {
       .send({
         id: 'e2e_create_1',
         sourceType: 'SMS',
-        sender: '+15555550100',
+        sender: '+155****0100',
         content: 'e2e test message',
         timestamp: Date.now(),
         packageName: 'com.test.app',
