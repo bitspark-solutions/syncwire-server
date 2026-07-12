@@ -8819,7 +8819,7 @@ export namespace Prisma {
     AND?: NotificationWhereInput | NotificationWhereInput[]
     OR?: NotificationWhereInput[]
     NOT?: NotificationWhereInput | NotificationWhereInput[]
-    id?: UuidFilter<"Notification"> | string
+    id?: StringFilter<"Notification"> | string
     deviceId?: StringFilter<"Notification"> | string
     sourceType?: StringFilter<"Notification"> | string
     sender?: StringFilter<"Notification"> | string
@@ -8872,7 +8872,7 @@ export namespace Prisma {
     AND?: NotificationScalarWhereWithAggregatesInput | NotificationScalarWhereWithAggregatesInput[]
     OR?: NotificationScalarWhereWithAggregatesInput[]
     NOT?: NotificationScalarWhereWithAggregatesInput | NotificationScalarWhereWithAggregatesInput[]
-    id?: UuidWithAggregatesFilter<"Notification"> | string
+    id?: StringWithAggregatesFilter<"Notification"> | string
     deviceId?: StringWithAggregatesFilter<"Notification"> | string
     sourceType?: StringWithAggregatesFilter<"Notification"> | string
     sender?: StringWithAggregatesFilter<"Notification"> | string
@@ -9267,7 +9267,7 @@ export namespace Prisma {
   }
 
   export type NotificationCreateInput = {
-    id?: string
+    id: string
     deviceId: string
     sourceType: string
     sender: string
@@ -9278,7 +9278,7 @@ export namespace Prisma {
   }
 
   export type NotificationUncheckedCreateInput = {
-    id?: string
+    id: string
     deviceId: string
     sourceType: string
     sender: string
@@ -9311,7 +9311,7 @@ export namespace Prisma {
   }
 
   export type NotificationCreateManyInput = {
-    id?: string
+    id: string
     deviceId: string
     sourceType: string
     sender: string

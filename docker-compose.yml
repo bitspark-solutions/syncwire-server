@@ -110,7 +110,7 @@ services:
       # Phase 1+ — Prisma needs the DB URL. In the container this points
       # at the in-network `postgres` service. On the host (for npm test),
       # override with localhost via .env or shell env.
-      DATABASE_URL: postgresql://syncwire:***@postgres:5432/syncwire
+      DATABASE_URL: postgresql://syncwire:${POSTGRES_PASSWORD:-syncwire_dev_only_change_me}@postgres:5432/syncwire
       # Phase 1+ — JWT auth. Dev default is a placeholder; replace in
       # any environment that issues real tokens.
       JWT_SECRET: ${JWT_SECRET:-dev-secret-do-not-use-in-prod-32bytes-min}
@@ -124,6 +124,9 @@ services:
       - ./tsconfig.json:/app/tsconfig.json:ro
       - ./tsconfig.build.json:/app/tsconfig.build.json:ro
       - ./nest-cli.json:/app/nest-cli.json:ro
+      # Bind-mount prisma/ so the generated client (built on the host via
+      # `npx prisma generate`) is visible to the running container.
+      - ./prisma:/app/prisma:ro
     depends_on:
       postgres:
         condition: service_healthy

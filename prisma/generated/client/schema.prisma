@@ -130,9 +130,12 @@ model PairingCode {
 
 // M1: notification forwarding. Auth comes later (Auth0) — for now a free-form
 // `deviceId` string scopes the row. When users land, add `userId` + FK.
+//
+// `id` is the CLIENT-generated identifier (the Android app stamps a UUIDv4
+// per notification). It's the dedupe key on the server, so we keep it as
+// a plain string — no DB-side UUID constraint. `deviceId` is the same.
 model Notification {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  // Client-supplied identifier. No FK yet; multi-tenant swap-in is M4.
+  id          String   @id
   deviceId    String   @map("device_id")
   sourceType  String   @map("source_type")
   sender      String
