@@ -1,50 +1,85 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
 import { CreateNotificationDto } from './dto/create-notification.dto';
 
 export interface NotificationRecord {
   id: string;
-  sourceType: 'SMS' | 'NOTIFICATION';
+  deviceId: string;
+  sourceType: string;
   sender: string;
   content: string;
-  timestamp: number;
   packageName: string;
+  timestamp: number;
   receivedAt: Date;
 }
 
 @Injectable()
 export class NotificationsService {
-  private readonly notifications: NotificationRecord[] = [];
-  private readonly MAX_LIMIT = 100;
+  constructor(private readonly prisma: PrismaService) {}
 
-  create(dto: CreateNotificationDto): NotificationRecord {
-    // Check if notification with same ID already exists to prevent duplication
-    const existingIndex = this.notifications.findIndex((n) => n.id === dto.id);
-    if (existingIndex !== -1) {
-      return this.notifications[existingIndex];
+  async create(dto: CreateNotificationDto): Promise<NotificationRecord> {
+    // Dedupe by client-supplied id. If we've seen it, return the stored row.
+    const existing = await this.prisma.notification.findUnique({
+      where: { id: dto.id },
+    });
+    if (existing) {
+      return this.toRecord(existing);
     }
 
-    const record: NotificationRecord = {
-      ...dto,
-      receivedAt: new Date(),
+    const row = await this.prisma.notification.create({
+      data: {
+        id: dto.id,
+        deviceId: dto.deviceId,
+        sourceType: dto.sourceType,
+        sender: dto.sender,
+        content: dto.content,
+        packageName: dto.packageName,
+        occurredAt: new Date(dto.timestamp),
+      },
+    });
+    return this.toRecord(row);
+  }
+
+  async findAll(deviceId?: string, limit = 50): Promise<NotificationRecord[]> {
+    const rows = await this.prisma.notification.findMany({
+      where: deviceId ? { deviceId } : undefined,
+      orderBy: { receivedAt: 'desc' },
+      take: limit,
+    });
+    return rows.map((r) => this.toRecord(r));
+  }
+
+  async findOne(id: string): Promise<NotificationRecord> {
+    const row = await this.prisma.notification.findUnique({ where: { id } });
+    if (!row) {
+      throw new NotFoundException(`Notification ${id} not found`);
+    }
+    return this.toRecord(row);
+  }
+
+  async clearAll(): Promise<void> {
+    await this.prisma.notification.deleteMany();
+  }
+
+  private toRecord(row: {
+    id: string;
+    deviceId: string;
+    sourceType: string;
+    sender: string;
+    content: string;
+    packageName: string;
+    occurredAt: Date;
+    receivedAt: Date;
+  }): NotificationRecord {
+    return {
+      id: row.id,
+      deviceId: row.deviceId,
+      sourceType: row.sourceType,
+      sender: row.sender,
+      content: row.content,
+      packageName: row.packageName,
+      timestamp: row.occurredAt.getTime(),
+      receivedAt: row.receivedAt,
     };
-
-    // Prepend to array (newest first)
-    this.notifications.unshift(record);
-
-    // Keep size under the limit
-    if (this.notifications.length > this.MAX_LIMIT) {
-      this.notifications.pop();
-    }
-
-    return record;
-  }
-
-  findAll(): NotificationRecord[] {
-    // Return a copy so callers cannot mutate the internal store
-    return [...this.notifications];
-  }
-
-  clearAll(): void {
-    this.notifications.length = 0;
   }
 }
