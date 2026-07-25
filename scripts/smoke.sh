@@ -89,7 +89,7 @@ COUNT=$(echo "$LIST" | grep -o '"id":"smoke_' | wc -l | tr -d ' ')
 ok "list returned 3 rows"
 
 # Verify ordering: newest first (C, B, A)
-ORDER=$(echo "$LIST" | grep -oE 'smoke_[abc]_[0-9]+' | head -3 | tr '\n' ',')
+ORDER=$(echo "$LIST" | grep -oE '"id":"smoke_[abc]_[0-9]+"' | head -3 | sed 's/"id":"//; s/"$//' | tr '\n' ',')
 echo "$ORDER" | grep -q "${ID_C},${ID_B},${ID_A}" \
   || fail "ordering wrong: got ${ORDER}"
 ok "newest-first ordering correct (${ORDER})"
