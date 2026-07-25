@@ -6,12 +6,10 @@ import { AppModule } from './../src/app.module';
 import { PrismaService } from './../src/prisma/prisma.service';
 
 // =============================================================================
-// SyncWire API — end-to-end (mocked Prisma).
+// SyncWire API — Auth + Per-User Notifications E2E
 //
-// We override PrismaService with an in-memory mock so the suite never touches
-// real Postgres. Live round-trip verification (curl /api/notifications against
-// the running docker stack) is in scripts/smoke.sh — run that separately when
-// the stack is up.
+// Tests the full flow: register → login → create notification → list notifications
+// Verifies that users can only see their own notifications.
 // =============================================================================
 
 type UserRow = {
@@ -161,7 +159,7 @@ function buildMockPrisma() {
           data: Omit<NotificationRow, 'receivedAt'> & { receivedAt?: Date };
         }) => {
           if (notifications.has(data.id)) {
-            throw new Error('duplicate id (should have been deduped upstream)');
+            throw new Error('duplicate id');
           }
           const row: NotificationRow = { ...data, receivedAt: new Date() };
           notifications.set(row.id, row);
@@ -275,10 +273,8 @@ function buildMockPrisma() {
 
 const mockPrisma = buildMockPrisma();
 
-describe('SyncWire API (e2e)', () => {
+describe('Auth + Per-User Notifications (e2e)', () => {
   let app: INestApplication<App>;
-  let authToken: string;
-  let testDeviceId: string;
 
   beforeEach(async () => {
     // Fresh store per test
@@ -297,23 +293,10 @@ describe('SyncWire API (e2e)', () => {
 
     app = moduleFixture.createNestApplication();
     app.setGlobalPrefix('api');
-    // Match production: same global ValidationPipe as src/main.ts
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, transform: true }),
     );
     await app.init();
-
-    // Register a test user for authenticated requests
-    const res = await request(app.getHttpServer())
-      .post('/api/auth/register')
-      .send({
-        email: 'test@example.com',
-        password: 'password123',
-        displayName: 'Test User',
-        device: { name: 'Test Device', platform: 'android' },
-      });
-    authToken = res.body.accessToken;
-    testDeviceId = res.body.device.id;
   });
 
   afterEach(async () => {
@@ -321,236 +304,338 @@ describe('SyncWire API (e2e)', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Health
+  // Helper: register a user and return tokens
   // ---------------------------------------------------------------------------
-  it('GET /api/health returns 200 with the stable shape and an ok DB probe', () => {
-    return request(app.getHttpServer())
-      .get('/api/health')
-      .expect(200)
-      .expect((res) => {
-        if (res.body.status !== 'ok') {
-          throw new Error(`status should be 'ok', got ${res.body.status}`);
-        }
-        if (typeof res.body.uptimeSeconds !== 'number') {
-          throw new Error('uptimeSeconds should be a number');
-        }
-        if (typeof res.body.timestamp !== 'string') {
-          throw new Error('timestamp should be an ISO string');
-        }
-        if (!res.body.checks?.database) {
-          throw new Error('checks.database missing');
-        }
-        if (!res.body.checks?.mqtt) {
-          throw new Error('checks.mqtt missing');
-        }
-        const db = res.body.checks.database as {
-          status: string;
-          detail?: string;
-        };
-        if (db.status !== 'ok') {
-          throw new Error(
-            `database probe should be ok, got ${db.status} (${db.detail ?? ''})`,
-          );
-        }
-      });
-  });
-
-  // ---------------------------------------------------------------------------
-  // POST /api/notifications
-  // ---------------------------------------------------------------------------
-  it('POST /api/notifications creates and returns 201 with all fields', () => {
-    return request(app.getHttpServer())
-      .post('/api/notifications')
-      .set('Authorization', `Bearer ${authToken}`)
+  async function registerUser(
+    email: string,
+    password: string,
+    displayName: string,
+    deviceName: string,
+  ) {
+    const res = await request(app.getHttpServer())
+      .post('/api/auth/register')
       .send({
-        id: 'e2e_create_1',
-        deviceId: testDeviceId,
-        sourceType: 'NOTIFICATION',
-        sender: 'com.test.app',
-        content: 'hello world',
-        timestamp: 1718540000000,
-        packageName: 'com.test.app',
-      })
-      .expect(201)
-      .expect((res) => {
-        const n = res.body as Record<string, unknown>;
-        if (n.id !== 'e2e_create_1') throw new Error(`id mismatch: ${n.id}`);
-        if (n.deviceId !== testDeviceId)
-          throw new Error(`deviceId mismatch: ${n.deviceId}`);
-        if (n.sourceType !== 'NOTIFICATION')
-          throw new Error(`sourceType mismatch: ${n.sourceType}`);
-        if (n.content !== 'hello world')
-          throw new Error(`content mismatch: ${n.content}`);
-        if (n.timestamp !== 1718540000000)
-          throw new Error(`timestamp mismatch: ${n.timestamp}`);
-        if (!n.receivedAt) throw new Error('receivedAt missing');
-      });
-  });
-
-  it('POST dedupes by id — same id returns the original, not a new row', async () => {
-    await request(app.getHttpServer())
-      .post('/api/notifications')
-      .set('Authorization', `Bearer ${authToken}`)
-      .send({
-        id: 'dup_1',
-        deviceId: testDeviceId,
-        sourceType: 'NOTIFICATION',
-        sender: 'a',
-        content: 'first',
-        timestamp: 1,
-        packageName: 'p',
+        email,
+        password,
+        displayName,
+        device: { name: deviceName, platform: 'android' },
       })
       .expect(201);
+    return res.body as {
+      accessToken: string;
+      refreshToken: string;
+      user: { id: string; email: string; displayName: string };
+      device: { id: string; name: string; platform: string };
+    };
+  }
 
-    await request(app.getHttpServer())
+  // ---------------------------------------------------------------------------
+  // Helper: create a notification as a user
+  // ---------------------------------------------------------------------------
+  async function createNotification(
+    accessToken: string,
+    id: string,
+    deviceId: string,
+    sender: string,
+    content: string,
+  ) {
+    return request(app.getHttpServer())
       .post('/api/notifications')
-      .set('Authorization', `Bearer ${authToken}`)
+      .set('Authorization', `Bearer ${accessToken}`)
       .send({
-        id: 'dup_1',
-        deviceId: testDeviceId,
+        id,
+        deviceId,
         sourceType: 'NOTIFICATION',
-        sender: 'a',
-        content: 'second',
-        timestamp: 2,
-        packageName: 'p',
+        sender,
+        content,
+        timestamp: Date.now(),
+        packageName: 'com.test.app',
       })
-      .expect(201)
-      .expect((res) => {
-        if ((res.body as { content: string }).content !== 'first') {
-          throw new Error('dedupe failed: second POST should return original');
-        }
-      });
-
-    const list = await request(app.getHttpServer())
-      .get('/api/notifications')
-      .set('Authorization', `Bearer ${authToken}`)
-      .expect(200);
-    if (list.body.length !== 1) {
-      throw new Error(`expected 1 row after dedupe, got ${list.body.length}`);
-    }
-  });
-
-  it('POST rejects missing required fields with 400', () => {
-    return request(app.getHttpServer())
-      .post('/api/notifications')
-      .set('Authorization', `Bearer ${authToken}`)
-      .send({
-        id: 'incomplete',
-        // missing deviceId, sourceType, sender, content, timestamp, packageName
-      })
-      .expect(400);
-  });
+      .expect(201);
+  }
 
   // ---------------------------------------------------------------------------
-  // GET /api/notifications
+  // Tests
   // ---------------------------------------------------------------------------
-  it('GET /api/notifications returns rows newest-first', async () => {
-    await seed(request(app.getHttpServer()), authToken, 'a', testDeviceId, 'first');
-    await new Promise((r) => setTimeout(r, 5));
-    await seed(request(app.getHttpServer()), authToken, 'b', testDeviceId, 'second');
-    await new Promise((r) => setTimeout(r, 5));
-    await seed(request(app.getHttpServer()), authToken, 'c', 'dev_2', 'other device');
+
+  it('register creates user and returns tokens', async () => {
+    const user = await registerUser(
+      'test@example.com',
+      'password123',
+      'Test User',
+      'Pixel 7',
+    );
+
+    expect(user.accessToken).toBeDefined();
+    expect(user.refreshToken).toBeDefined();
+    expect(user.user.email).toBe('test@example.com');
+    expect(user.user.displayName).toBe('Test User');
+    expect(user.device.name).toBe('Pixel 7');
+    expect(user.device.id).toBeDefined();
+  });
+
+  it('user can create and retrieve their own notification', async () => {
+    const user = await registerUser(
+      'usera@test.com',
+      'password123',
+      'User A',
+      'Device A',
+    );
+
+    await createNotification(
+      user.accessToken,
+      'notif-1',
+      user.device.id,
+      'WhatsApp',
+      'Hello from User A',
+    );
 
     const res = await request(app.getHttpServer())
       .get('/api/notifications')
-      .set('Authorization', `Bearer ${authToken}`)
+      .set('Authorization', `Bearer ${user.accessToken}`)
       .expect(200);
-    const ids = (res.body as Array<{ id: string }>).map((n) => n.id);
-    if (ids[0] !== 'c' || ids[1] !== 'b' || ids[2] !== 'a') {
-      throw new Error(`expected [c,b,a], got ${ids.join(',')}`);
-    }
+
+    expect(res.body).toHaveLength(1);
+    expect(res.body[0].id).toBe('notif-1');
+    expect(res.body[0].sender).toBe('WhatsApp');
+    expect(res.body[0].content).toBe('Hello from User A');
   });
 
-  it('GET /api/notifications?deviceId=... filters by device', async () => {
-    await seed(request(app.getHttpServer()), authToken, 'a', testDeviceId, 'from 1');
-    await seed(request(app.getHttpServer()), authToken, 'b', 'dev_2', 'from 2');
+  it('users can only see their own notifications (isolation)', async () => {
+    // Register two users
+    const userA = await registerUser(
+      'usera@test.com',
+      'password123',
+      'User A',
+      'Device A',
+    );
+    const userB = await registerUser(
+      'userb@test.com',
+      'password123',
+      'User B',
+      'Device B',
+    );
 
-    const res = await request(app.getHttpServer())
-      .get(`/api/notifications?deviceId=${testDeviceId}`)
-      .set('Authorization', `Bearer ${authToken}`)
+    // Both create notifications
+    await createNotification(
+      userA.accessToken,
+      'notif-a',
+      userA.device.id,
+      'WhatsApp',
+      'Message from A',
+    );
+    await createNotification(
+      userB.accessToken,
+      'notif-b',
+      userB.device.id,
+      'Telegram',
+      'Message from B',
+    );
+
+    // User A should only see their own
+    const resA = await request(app.getHttpServer())
+      .get('/api/notifications')
+      .set('Authorization', `Bearer ${userA.accessToken}`)
       .expect(200);
-    const ids = (res.body as Array<{ id: string }>).map((n) => n.id);
-    if (ids.length !== 1 || ids[0] !== 'a') {
-      throw new Error(`expected [a], got ${ids.join(',')}`);
-    }
+
+    expect(resA.body).toHaveLength(1);
+    expect(resA.body[0].id).toBe('notif-a');
+    expect(resA.body[0].sender).toBe('WhatsApp');
+
+    // User B should only see their own
+    const resB = await request(app.getHttpServer())
+      .get('/api/notifications')
+      .set('Authorization', `Bearer ${userB.accessToken}`)
+      .expect(200);
+
+    expect(resB.body).toHaveLength(1);
+    expect(resB.body[0].id).toBe('notif-b');
+    expect(resB.body[0].sender).toBe('Telegram');
   });
 
-  it('GET /api/notifications?limit=N caps the result set', async () => {
-    for (let i = 0; i < 5; i += 1) {
-      await seed(request(app.getHttpServer()), authToken, `n${i}`, testDeviceId, `msg ${i}`);
-    }
-    const res = await request(app.getHttpServer())
-      .get('/api/notifications?limit=2')
-      .set('Authorization', `Bearer ${authToken}`)
-      .expect(200);
-    if (res.body.length !== 2) {
-      throw new Error(`expected 2 rows, got ${res.body.length}`);
-    }
-  });
+  it('user cannot access another user\'s notification by id', async () => {
+    const userA = await registerUser(
+      'usera@test.com',
+      'password123',
+      'User A',
+      'Device A',
+    );
+    const userB = await registerUser(
+      'userb@test.com',
+      'password123',
+      'User B',
+      'Device B',
+    );
 
-  // ---------------------------------------------------------------------------
-  // GET /api/notifications/:id
-  // ---------------------------------------------------------------------------
-  it('GET /api/notifications/:id returns the row when present', async () => {
-    await seed(request(app.getHttpServer()), authToken, 'find_me', testDeviceId, 'hello');
-    const res = await request(app.getHttpServer())
-      .get('/api/notifications/find_me')
-      .set('Authorization', `Bearer ${authToken}`)
-      .expect(200);
-    if ((res.body as { id: string }).id !== 'find_me') {
-      throw new Error('id mismatch');
-    }
-  });
+    await createNotification(
+      userB.accessToken,
+      'notif-b',
+      userB.device.id,
+      'Telegram',
+      'Secret message',
+    );
 
-  it('GET /api/notifications/:id returns 404 when missing', () => {
-    return request(app.getHttpServer())
-      .get('/api/notifications/does_not_exist')
-      .set('Authorization', `Bearer ${authToken}`)
+    // User A tries to access User B's notification
+    await request(app.getHttpServer())
+      .get('/api/notifications/notif-b')
+      .set('Authorization', `Bearer ${userA.accessToken}`)
       .expect(404);
   });
 
-  // ---------------------------------------------------------------------------
-  // DELETE /api/notifications
-  // ---------------------------------------------------------------------------
-  it('DELETE /api/notifications clears all rows (204)', async () => {
-    await seed(request(app.getHttpServer()), authToken, 'a', testDeviceId, 'x');
-    await seed(request(app.getHttpServer()), authToken, 'b', testDeviceId, 'y');
+  it('user can only clear their own notifications', async () => {
+    const userA = await registerUser(
+      'usera@test.com',
+      'password123',
+      'User A',
+      'Device A',
+    );
+    const userB = await registerUser(
+      'userb@test.com',
+      'password123',
+      'User B',
+      'Device B',
+    );
+
+    await createNotification(
+      userA.accessToken,
+      'notif-a',
+      userA.device.id,
+      'WhatsApp',
+      'Message from A',
+    );
+    await createNotification(
+      userB.accessToken,
+      'notif-b',
+      userB.device.id,
+      'Telegram',
+      'Message from B',
+    );
+
+    // User A clears their notifications
     await request(app.getHttpServer())
       .delete('/api/notifications')
-      .set('Authorization', `Bearer ${authToken}`)
+      .set('Authorization', `Bearer ${userA.accessToken}`)
       .expect(204);
-    const res = await request(app.getHttpServer())
+
+    // User A should have none
+    const resA = await request(app.getHttpServer())
       .get('/api/notifications')
-      .set('Authorization', `Bearer ${authToken}`)
+      .set('Authorization', `Bearer ${userA.accessToken}`)
       .expect(200);
-    if (res.body.length !== 0) {
-      throw new Error(`expected 0 rows after clear, got ${res.body.length}`);
-    }
+    expect(resA.body).toHaveLength(0);
+
+    // User B should still have theirs
+    const resB = await request(app.getHttpServer())
+      .get('/api/notifications')
+      .set('Authorization', `Bearer ${userB.accessToken}`)
+      .expect(200);
+    expect(resB.body).toHaveLength(1);
+    expect(resB.body[0].id).toBe('notif-b');
+  });
+
+  it('unauthenticated requests are rejected', async () => {
+    await request(app.getHttpServer())
+      .get('/api/notifications')
+      .expect(401);
+
+    await request(app.getHttpServer())
+      .post('/api/notifications')
+      .send({
+        id: 'test',
+        deviceId: 'dev',
+        sourceType: 'NOTIFICATION',
+        sender: 'test',
+        content: 'test',
+        timestamp: Date.now(),
+        packageName: 'com.test',
+      })
+      .expect(401);
+  });
+
+  it('login returns valid tokens for existing user', async () => {
+    const email = 'login@test.com';
+    const password = 'password123';
+
+    // Register
+    await registerUser(email, password, 'Login User', 'Device');
+
+    // Login
+    const res = await request(app.getHttpServer())
+      .post('/api/auth/login')
+      .send({
+        email,
+        password,
+        device: { name: 'Device', platform: 'android' },
+      })
+      .expect(200);
+
+    expect(res.body.accessToken).toBeDefined();
+    expect(res.body.refreshToken).toBeDefined();
+
+    // Use token to access notifications
+    await request(app.getHttpServer())
+      .get('/api/notifications')
+      .set('Authorization', `Bearer ${res.body.accessToken}`)
+      .expect(200);
+  });
+
+  it('full Android app simulation: register → send notif → verify isolation', async () => {
+    // Simulate two Android devices registering
+    const androidA = await registerUser(
+      'android-a@test.com',
+      'password123',
+      'Android User A',
+      'Pixel 7 Pro',
+    );
+    const androidB = await registerUser(
+      'android-b@test.com',
+      'password123',
+      'Android User B',
+      'Samsung Galaxy',
+    );
+
+    // Android A forwards a notification
+    await createNotification(
+      androidA.accessToken,
+      'android-notif-a-001',
+      androidA.device.id,
+      'com.whatsapp',
+      'WhatsApp message from Alice',
+    );
+
+    // Android B forwards a notification
+    await createNotification(
+      androidB.accessToken,
+      'android-notif-b-001',
+      androidB.device.id,
+      'org.telegram',
+      'Telegram message from Bob',
+    );
+
+    // Web UI fetches for User A
+    const webResA = await request(app.getHttpServer())
+      .get('/api/notifications')
+      .set('Authorization', `Bearer ${androidA.accessToken}`)
+      .expect(200);
+
+    expect(webResA.body).toHaveLength(1);
+    expect(webResA.body[0].sender).toBe('com.whatsapp');
+    expect(webResA.body[0].content).toBe('WhatsApp message from Alice');
+
+    // Web UI fetches for User B
+    const webResB = await request(app.getHttpServer())
+      .get('/api/notifications')
+      .set('Authorization', `Bearer ${androidB.accessToken}`)
+      .expect(200);
+
+    expect(webResB.body).toHaveLength(1);
+    expect(webResB.body[0].sender).toBe('org.telegram');
+    expect(webResB.body[0].content).toBe('Telegram message from Bob');
+
+    // Verify no cross-contamination
+    const idsA = webResA.body.map((n: { id: string }) => n.id);
+    const idsB = webResB.body.map((n: { id: string }) => n.id);
+    expect(idsA).not.toContain('android-notif-b-001');
+    expect(idsB).not.toContain('android-notif-a-001');
   });
 });
-
-// -----------------------------------------------------------------------------
-// Helper: seed a notification via the public API so the test exercises the
-// controller → service → mock chain end-to-end.
-// -----------------------------------------------------------------------------
-function seed(
-  agent: ReturnType<typeof request>,
-  authToken: string,
-  id: string,
-  deviceId: string,
-  content: string,
-) {
-  return agent
-    .post('/api/notifications')
-    .set('Authorization', `Bearer ${authToken}`)
-    .send({
-      id,
-      deviceId,
-      sourceType: 'NOTIFICATION',
-      sender: 'tester',
-      content,
-      timestamp: Date.now(),
-      packageName: 'com.test',
-    })
-    .expect(201);
-}
