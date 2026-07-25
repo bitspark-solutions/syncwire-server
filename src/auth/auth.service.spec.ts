@@ -41,7 +41,11 @@ describe('AuthService', () => {
         { provide: JwtService, useValue: mockJwt },
         {
           provide: JWT_OPTIONS,
-          useValue: { secret: 'x'.repeat(32), accessTtlSeconds: 3600, refreshTtlSeconds: 7776000 },
+          useValue: {
+            secret: 'x'.repeat(32),
+            accessTtlSeconds: 3600,
+            refreshTtlSeconds: 7776000,
+          },
         },
       ],
     }).compile();
@@ -88,8 +92,8 @@ describe('AuthService', () => {
         expect.objectContaining({
           data: expect.objectContaining({
             tokenHash: `sha256(${result.refreshToken})`,
-          }),
-        }),
+          }) as object,
+        }) as object,
       );
     });
 
@@ -179,8 +183,8 @@ describe('AuthService', () => {
         where: { id: 'old-id' },
         data: expect.objectContaining({
           replacedById: 'new-id',
-          revokedAt: expect.any(Date),
-        }),
+          revokedAt: expect.any(Date) as Date,
+        }) as object,
       });
     });
 
@@ -195,7 +199,7 @@ describe('AuthService', () => {
       );
       expect(mockPrisma.refreshToken.updateMany).toHaveBeenCalledWith({
         where: { userId: 'user-1', revokedAt: null },
-        data: { revokedAt: expect.any(Date) },
+        data: { revokedAt: expect.any(Date) as Date },
       });
     });
 
@@ -237,7 +241,7 @@ describe('AuthService', () => {
           userId: 'user-1',
           revokedAt: null,
         },
-        data: { revokedAt: expect.any(Date) },
+        data: { revokedAt: expect.any(Date) as Date },
       });
     });
   });

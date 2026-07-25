@@ -31,8 +31,9 @@ describe('NotificationsService', () => {
   // Minimal in-memory Prisma mock. Just the methods the service calls.
   const prismaMock = {
     notification: {
-      findUnique: jest.fn(async ({ where: { id } }: { where: { id: string } }) =>
-        store.get(id) ?? null,
+      findUnique: jest.fn(
+        async ({ where: { id } }: { where: { id: string } }) =>
+          store.get(id) ?? null,
       ),
       findMany: jest.fn(
         async ({
@@ -49,7 +50,9 @@ describe('NotificationsService', () => {
             rows = rows.filter((r) => r.deviceId === where.deviceId);
           }
           if (orderBy?.receivedAt === 'desc') {
-            rows.sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime());
+            rows.sort(
+              (a, b) => b.receivedAt.getTime() - a.receivedAt.getTime(),
+            );
           }
           return take ? rows.slice(0, take) : rows;
         },
@@ -104,7 +107,10 @@ describe('NotificationsService', () => {
 
   it('dedupes by id — second create with same id returns the original', async () => {
     const first = await service.create(sampleDto());
-    const second = await service.create({ ...sampleDto(), content: 'different' });
+    const second = await service.create({
+      ...sampleDto(),
+      content: 'different',
+    });
     expect(second).toEqual(first);
     expect(second.content).toBe('hello');
   });

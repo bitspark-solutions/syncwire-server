@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer';
 import {
+  IsDefined,
   IsEmail,
   IsString,
   Matches,
@@ -29,6 +30,9 @@ export class RegisterDto {
   @MaxLength(80)
   displayName!: string;
 
+  // @ValidateNested silently passes when the property is absent — @IsDefined
+  // makes a missing device a 400 instead of a 500 downstream.
+  @IsDefined()
   @ValidateNested()
   @Type(() => DeviceInfoDto)
   device!: DeviceInfoDto;

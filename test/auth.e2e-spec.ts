@@ -55,21 +55,22 @@ function buildMockPrisma() {
     onModuleDestroy: jest.fn().mockResolvedValue(undefined),
     user: {
       findUnique: jest.fn(
-        async ({ where }: { where: { email?: string; id?: string } }) => {
+        ({ where }: { where: { email?: string; id?: string } }) => {
           const all = Array.from(users.values());
-          if (where.email) return all.find((u) => u.email === where.email) ?? null;
+          if (where.email)
+            return all.find((u) => u.email === where.email) ?? null;
           if (where.id) return users.get(where.id) ?? null;
           return null;
         },
       ),
-      create: jest.fn(async ({ data }: { data: Omit<UserRow, 'id'> }) => {
+      create: jest.fn(({ data }: { data: Omit<UserRow, 'id'> }) => {
         const row: UserRow = { id: nextId('user'), ...data };
         users.set(row.id, row);
         return row;
       }),
     },
     device: {
-      create: jest.fn(async ({ data }: { data: Omit<DeviceRow, 'id'> }) => {
+      create: jest.fn(({ data }: { data: Omit<DeviceRow, 'id'> }) => {
         const row: DeviceRow = { id: nextId('dev'), ...data };
         devices.set(row.id, row);
         return row;
@@ -77,10 +78,13 @@ function buildMockPrisma() {
     },
     refreshToken: {
       create: jest.fn(
-        async ({
+        ({
           data,
         }: {
-          data: Pick<TokenRow, 'userId' | 'deviceId' | 'tokenHash' | 'expiresAt'>;
+          data: Pick<
+            TokenRow,
+            'userId' | 'deviceId' | 'tokenHash' | 'expiresAt'
+          >;
         }) => {
           const row: TokenRow = {
             id: nextId('rt'),
@@ -92,22 +96,20 @@ function buildMockPrisma() {
           return row;
         },
       ),
-      findUnique: jest.fn(
-        async ({ where }: { where: { tokenHash: string } }) => {
-          const row = Array.from(tokens.values()).find(
-            (t) => t.tokenHash === where.tokenHash,
-          );
-          if (!row) return null;
-          // Emulate `include: { user: true, device: true }`
-          return {
-            ...row,
-            user: users.get(row.userId),
-            device: devices.get(row.deviceId),
-          };
-        },
-      ),
+      findUnique: jest.fn(({ where }: { where: { tokenHash: string } }) => {
+        const row = Array.from(tokens.values()).find(
+          (t) => t.tokenHash === where.tokenHash,
+        );
+        if (!row) return null;
+        // Emulate `include: { user: true, device: true }`
+        return {
+          ...row,
+          user: users.get(row.userId),
+          device: devices.get(row.deviceId),
+        };
+      }),
       update: jest.fn(
-        async ({
+        ({
           where,
           data,
         }: {
@@ -121,7 +123,7 @@ function buildMockPrisma() {
         },
       ),
       updateMany: jest.fn(
-        async ({
+        ({
           where,
           data,
         }: {
@@ -145,7 +147,7 @@ function buildMockPrisma() {
 
 const mockPrisma = buildMockPrisma();
 
-const device = { name: 'Pixel 8', platform: 'ANDROID' };
+const device = { name: 'Pixel 8', platform: 'android' };
 const goodUser = {
   email: 'alice@example.com',
   password: 'Password1',
@@ -169,7 +171,9 @@ describe('Auth API (e2e)', () => {
     app = moduleFixture.createNestApplication();
     app.setGlobalPrefix('api');
     // Match production: same global ValidationPipe as src/main.ts
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+    app.useGlobalPipes(
+      new ValidationPipe({ whitelist: true, transform: true }),
+    );
     await app.init();
   });
 
@@ -185,15 +189,23 @@ describe('Auth API (e2e)', () => {
   // ---------------------------------------------------------------------------
   it('register returns 201 with tokens, user, and device (no password leak)', async () => {
     const res = await register().expect(201);
-    const body = res.body as Record<string, any>;
+    const body = res.body as {
+      accessToken: string;
+      refreshToken: string;
+      user: { id: string; email: string; displayName: string };
+      device: { id: string; name: string };
+    };
     expect(body.accessToken).toEqual(expect.any(String));
     expect(body.refreshToken).toEqual(expect.any(String));
     expect(body.user).toEqual({
-      id: expect.any(String),
+      id: expect.any(String) as string,
       email: goodUser.email,
       displayName: goodUser.displayName,
     });
-    expect(body.device).toEqual({ id: expect.any(String), name: device.name });
+    expect(body.device).toEqual({
+      id: expect.any(String) as string,
+      name: device.name,
+    });
     expect(JSON.stringify(body)).not.toContain('Password1');
     expect(JSON.stringify(body)).not.toContain('passwordHash');
   });
@@ -210,7 +222,8 @@ describe('Auth API (e2e)', () => {
   });
 
   it('register rejects a missing device with 400', async () => {
-    const { device: _omitted, ...withoutDevice } = goodUser;
+    const withoutDevice: Partial<typeof goodUser> = { ...goodUser };
+    delete withoutDevice.device;
     await register(withoutDevice).expect(400);
   });
 
@@ -223,7 +236,11 @@ describe('Auth API (e2e)', () => {
       .post('/api/auth/login')
       .send({ email: goodUser.email, password: goodUser.password, device })
       .expect(200);
-    const body = res.body as Record<string, any>;
+    const body = res.body as {
+      accessToken: string;
+      refreshToken: string;
+      user: { email: string };
+    };
     expect(body.accessToken).toEqual(expect.any(String));
     expect(body.refreshToken).toEqual(expect.any(String));
     expect(body.user.email).toBe(goodUser.email);

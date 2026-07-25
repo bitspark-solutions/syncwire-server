@@ -21,7 +21,9 @@ export class JwtService {
 
   constructor(@Inject(JWT_OPTIONS) private readonly opts: JwtOptions) {}
 
-  signAccess(payload: Omit<AccessTokenPayload, 'iat' | 'exp'>): Promise<string> {
+  signAccess(
+    payload: Omit<AccessTokenPayload, 'iat' | 'exp'>,
+  ): Promise<string> {
     return this.nestJwt.signAsync(payload, {
       secret: this.opts.secret,
       expiresIn: this.opts.accessTtlSeconds,

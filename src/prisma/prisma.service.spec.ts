@@ -8,7 +8,9 @@ const mockDisconnect = jest.fn().mockResolvedValue(undefined);
 const mockUserFindMany = jest.fn().mockResolvedValue([]);
 
 jest.mock('@prisma/adapter-pg', () => ({
-  PrismaPg: jest.fn().mockImplementation((config: unknown) => ({ __mock: 'PrismaPg', config })),
+  PrismaPg: jest
+    .fn()
+    .mockImplementation((config: unknown) => ({ __mock: 'PrismaPg', config })),
 }));
 
 // Mock the Prisma 7 generated-client path (matches the `output` in

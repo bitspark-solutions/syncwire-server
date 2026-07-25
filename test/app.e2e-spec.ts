@@ -141,7 +141,10 @@ describe('SyncWire API (e2e)', () => {
         if (!res.body.checks?.mqtt) {
           throw new Error('checks.mqtt missing');
         }
-        const db = res.body.checks.database as { status: string; detail?: string };
+        const db = res.body.checks.database as {
+          status: string;
+          detail?: string;
+        };
         if (db.status !== 'ok') {
           throw new Error(
             `database probe should be ok, got ${db.status} (${db.detail ?? ''})`,
@@ -300,9 +303,7 @@ describe('SyncWire API (e2e)', () => {
   it('DELETE /api/notifications clears all rows (204)', async () => {
     await seed(request(app.getHttpServer()), 'a', 'd', 'x');
     await seed(request(app.getHttpServer()), 'b', 'd', 'y');
-    await request(app.getHttpServer())
-      .delete('/api/notifications')
-      .expect(204);
+    await request(app.getHttpServer()).delete('/api/notifications').expect(204);
     const res = await request(app.getHttpServer())
       .get('/api/notifications')
       .expect(200);
