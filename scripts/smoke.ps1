@@ -1,8 +1,8 @@
 # =============================================================================
 # SyncWire — live smoke test (PowerShell)
 # =============================================================================
-# Same as scripts/smoke.sh but runs natively on Windows PowerShell.
-# Exercises the running docker stack end-to-end.
+# Exercises the running docker stack end-to-end with real Postgres.
+# Tests: register → login → post notification with JWT → per-user isolation.
 #
 # Usage:
 #   .\scripts\smoke.ps1
@@ -11,12 +11,7 @@
 
 $ErrorActionPreference = 'Stop'
 $APP_URL = if ($env:APP_URL) { $env:APP_URL } else { 'http://127.0.0.1:18080' }
-$DEVICE_ID = "smoke_$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
-$IDS = @{
-  A = "smoke_a_$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
-  B = "smoke_b_$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
-  C = "smoke_c_$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
-}
+$TIMESTAMP = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
 function Banner($msg) { Write-Host "`n$msg" -ForegroundColor Cyan }
 function Pass($msg)   { Write-Host "  PASS $msg" -ForegroundColor Green }
@@ -36,100 +31,182 @@ if ($health.checks.database.status -ne 'ok') { Fail "db probe != ok" }
 Pass "health + db probe ok"
 
 # -----------------------------------------------------------------------------
-# 1. POST three notifications
+# 1. Register two users
 # -----------------------------------------------------------------------------
-Banner "1. POST /api/notifications (3 inserts)"
-foreach ($k in 'A','B','C') {
-  $id = $IDS[$k]
-  $body = @{
-    id = $id
-    deviceId = $DEVICE_ID
-    sourceType = 'NOTIFICATION'
-    sender = 'smoke'
-    content = "hello $id"
-    timestamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-    packageName = 'smoke'
-  } | ConvertTo-Json -Compress
-  Invoke-RestMethod -Uri "$APP_URL/api/notifications" -Method Post `
-    -ContentType 'application/json' -Body $body | Out-Null
-  Pass "posted $id"
-}
+Banner "1. POST /api/auth/register (2 users)"
 
-# -----------------------------------------------------------------------------
-# 2. Dedupe
-# -----------------------------------------------------------------------------
-Banner "2. Dedupe - re-post $($IDS.A)"
-$body = @{
-  id = $IDS.A
-  deviceId = $DEVICE_ID
-  sourceType = 'NOTIFICATION'
-  sender = 'smoke'
-  content = 'DIFFERENT CONTENT'
-  timestamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-  packageName = 'smoke'
+$userA = @{
+  email = "smoke_a_$TIMESTAMP@test.com"
+  password = "password123"
+  displayName = "Smoke User A"
+  device = @{ name = "Smoke Device A"; platform = "android" }
 } | ConvertTo-Json -Compress
-$dedupe = Invoke-RestMethod -Uri "$APP_URL/api/notifications" -Method Post `
-  -ContentType 'application/json' -Body $body
-if ($dedupe.content -ne "hello $($IDS.A)") {
-  Fail "dedupe failed - expected original content, got '$($dedupe.content)'"
-}
-Pass "dedupe works (original content returned)"
 
-# -----------------------------------------------------------------------------
-# 3. GET list
-# -----------------------------------------------------------------------------
-Banner "3. GET /api/notifications?deviceId=$DEVICE_ID"
-$list = Invoke-RestMethod -Uri "$APP_URL/api/notifications?deviceId=$DEVICE_ID" -Method Get
-if ($list.Count -ne 3) { Fail "expected 3 rows, got $($list.Count)" }
-Pass "list returned 3 rows"
-$order = ($list | Select-Object -First 3) | ForEach-Object { $_.id }
-if (($order[0] -ne $IDS.C) -or ($order[1] -ne $IDS.B) -or ($order[2] -ne $IDS.A)) {
-  Fail "ordering wrong: $($order -join ',')"
-}
-Pass "newest-first ordering correct"
+$userB = @{
+  email = "smoke_b_$TIMESTAMP@test.com"
+  password = "password123"
+  displayName = "Smoke User B"
+  device = @{ name = "Smoke Device B"; platform = "android" }
+} | ConvertTo-Json -Compress
 
-# -----------------------------------------------------------------------------
-# 4. GET by id
-# -----------------------------------------------------------------------------
-Banner "4. GET /api/notifications/$($IDS.B)"
-$one = Invoke-RestMethod -Uri "$APP_URL/api/notifications/$($IDS.B)" -Method Get
-if ($one.id -ne $IDS.B) { Fail "id mismatch" }
-Pass "single fetch ok"
-
-# -----------------------------------------------------------------------------
-# 5. 404
-# -----------------------------------------------------------------------------
-Banner "5. GET /api/notifications/does-not-exist -> 404"
 try {
-  $null = Invoke-RestMethod -Uri "$APP_URL/api/notifications/does-not-exist" -Method Get
+  $authA = Invoke-RestMethod -Uri "$APP_URL/api/auth/register" -Method Post `
+    -ContentType 'application/json' -Body $userA
+  Pass "registered user A: $($authA.user.email)"
+} catch {
+  Fail "register user A failed: $_"
+}
+
+try {
+  $authB = Invoke-RestMethod -Uri "$APP_URL/api/auth/register" -Method Post `
+    -ContentType 'application/json' -Body $userB
+  Pass "registered user B: $($authB.user.email)"
+} catch {
+  Fail "register user B failed: $_"
+}
+
+$tokenA = $authA.accessToken
+$tokenB = $authB.accessToken
+$deviceA = $authA.device.id
+$deviceB = $authB.device.id
+
+# -----------------------------------------------------------------------------
+# 2. Login as user A
+# -----------------------------------------------------------------------------
+Banner "2. POST /api/auth/login (user A)"
+
+$loginBody = @{
+  email = "smoke_a_$TIMESTAMP@test.com"
+  password = "password123"
+  device = @{ name = "Smoke Device A"; platform = "android" }
+} | ConvertTo-Json -Compress
+
+try {
+  $loginA = Invoke-RestMethod -Uri "$APP_URL/api/auth/login" -Method Post `
+    -ContentType 'application/json' -Body $loginBody
+  Pass "login user A ok, got new tokens"
+} catch {
+  Fail "login user A failed: $_"
+}
+
+# -----------------------------------------------------------------------------
+# 3. Post notifications as both users
+# -----------------------------------------------------------------------------
+Banner "3. POST /api/notifications (both users)"
+
+$notifA = @{
+  id = "smoke_notif_a_$TIMESTAMP"
+  deviceId = $deviceA
+  sourceType = "NOTIFICATION"
+  sender = "WhatsApp"
+  content = "Hello from User A"
+  timestamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+  packageName = "com.whatsapp"
+} | ConvertTo-Json -Compress
+
+$notifB = @{
+  id = "smoke_notif_b_$TIMESTAMP"
+  deviceId = $deviceB
+  sourceType = "NOTIFICATION"
+  sender = "Telegram"
+  content = "Hello from User B"
+  timestamp = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+  packageName = "org.telegram.messenger"
+} | ConvertTo-Json -Compress
+
+try {
+  Invoke-RestMethod -Uri "$APP_URL/api/notifications" -Method Post `
+    -ContentType 'application/json' -Body $notifA `
+    -Headers @{ Authorization = "Bearer $tokenA" } | Out-Null
+  Pass "posted notification as user A"
+} catch {
+  Fail "post notification as user A failed: $_"
+}
+
+try {
+  Invoke-RestMethod -Uri "$APP_URL/api/notifications" -Method Post `
+    -ContentType 'application/json' -Body $notifB `
+    -Headers @{ Authorization = "Bearer $tokenB" } | Out-Null
+  Pass "posted notification as user B"
+} catch {
+  Fail "post notification as user B failed: $_"
+}
+
+# -----------------------------------------------------------------------------
+# 4. Verify per-user isolation
+# -----------------------------------------------------------------------------
+Banner "4. GET /api/notifications (per-user isolation)"
+
+$listA = Invoke-RestMethod -Uri "$APP_URL/api/notifications" -Method Get `
+  -Headers @{ Authorization = "Bearer $tokenA" }
+if ($listA.Count -ne 1) { Fail "user A expected 1 notification, got $($listA.Count)" }
+if ($listA[0].id -ne "smoke_notif_a_$TIMESTAMP") { Fail "user A got wrong notification: $($listA[0].id)" }
+if ($listA[0].sender -ne "WhatsApp") { Fail "user A wrong sender: $($listA[0].sender)" }
+Pass "user A sees only their own notification"
+
+$listB = Invoke-RestMethod -Uri "$APP_URL/api/notifications" -Method Get `
+  -Headers @{ Authorization = "Bearer $tokenB" }
+if ($listB.Count -ne 1) { Fail "user B expected 1 notification, got $($listB.Count)" }
+if ($listB[0].id -ne "smoke_notif_b_$TIMESTAMP") { Fail "user B got wrong notification: $($listB[0].id)" }
+if ($listB[0].sender -ne "Telegram") { Fail "user B wrong sender: $($listB[0].sender)" }
+Pass "user B sees only their own notification"
+
+# -----------------------------------------------------------------------------
+# 5. Cross-user access blocked (404)
+# -----------------------------------------------------------------------------
+Banner "5. GET /api/notifications/{other-user-id} -> 404"
+
+try {
+  $null = Invoke-RestMethod -Uri "$APP_URL/api/notifications/smoke_notif_b_$TIMESTAMP" -Method Get `
+    -Headers @{ Authorization = "Bearer $tokenA" }
   Fail "expected 404, got 200"
 } catch {
   if ($_.Exception.Response.StatusCode -ne 404) {
     Fail "expected 404, got $($_.Exception.Response.StatusCode)"
   }
 }
-Pass "404 returned"
+Pass "user A cannot access user B's notification (404)"
 
 # -----------------------------------------------------------------------------
-# 6. Validation: 400 on missing fields
+# 6. Unauthenticated rejected (401)
 # -----------------------------------------------------------------------------
-Banner "6. POST with missing fields -> 400"
+Banner "6. GET /api/notifications (no auth) -> 401"
+
 try {
-  $null = Invoke-RestMethod -Uri "$APP_URL/api/notifications" -Method Post `
-    -ContentType 'application/json' -Body '{"id":"incomplete"}'
-  Fail "expected 400, got 200"
+  $null = Invoke-RestMethod -Uri "$APP_URL/api/notifications" -Method Get
+  Fail "expected 401, got 200"
 } catch {
-  if ($_.Exception.Response.StatusCode -ne 400) {
-    Fail "expected 400, got $($_.Exception.Response.StatusCode)"
+  if ($_.Exception.Response.StatusCode -ne 401) {
+    Fail "expected 401, got $($_.Exception.Response.StatusCode)"
   }
 }
-Pass "validation rejects incomplete payload"
+Pass "unauthenticated request rejected (401)"
 
 # -----------------------------------------------------------------------------
-# 7. Cleanup
+# 7. Clear own notifications only
 # -----------------------------------------------------------------------------
-Banner "7. DELETE /api/notifications (cleanup)"
-Invoke-RestMethod -Uri "$APP_URL/api/notifications" -Method Delete | Out-Null
-Pass "cleared"
+Banner "7. DELETE /api/notifications (clear own only)"
+
+Invoke-RestMethod -Uri "$APP_URL/api/notifications" -Method Delete `
+  -Headers @{ Authorization = "Bearer $tokenA" } | Out-Null
+
+$listA = Invoke-RestMethod -Uri "$APP_URL/api/notifications" -Method Get `
+  -Headers @{ Authorization = "Bearer $tokenA" }
+if ($listA.Count -ne 0) { Fail "user A expected 0 after clear, got $($listA.Count)" }
+Pass "user A cleared their notifications"
+
+$listB = Invoke-RestMethod -Uri "$APP_URL/api/notifications" -Method Get `
+  -Headers @{ Authorization = "Bearer $tokenB" }
+if ($listB.Count -ne 1) { Fail "user B expected 1 after A cleared, got $($listB.Count)" }
+Pass "user B's notifications unaffected"
+
+# -----------------------------------------------------------------------------
+# 8. Cleanup
+# -----------------------------------------------------------------------------
+Banner "8. Cleanup (delete user B's notifications)"
+
+Invoke-RestMethod -Uri "$APP_URL/api/notifications" -Method Delete `
+  -Headers @{ Authorization = "Bearer $tokenB" } | Out-Null
+Pass "cleared user B's notifications"
 
 Write-Host "`nAll smoke checks passed." -ForegroundColor Green
