@@ -38,6 +38,7 @@ model User {
 
   devices               Device[]
   refreshTokens         RefreshToken[]
+  notifications         Notification[]
   pairingsAsSource      Pairing[]      @relation("PairingSource")
   pairingsAsViewer      Pairing[]      @relation("PairingViewer")
   pairingCodesInitiated PairingCode[]  @relation("PairingCodeInitiatorUser")
@@ -136,6 +137,7 @@ model PairingCode {
 // a plain string — no DB-side UUID constraint. `deviceId` is the same.
 model Notification {
   id          String   @id
+  userId      String   @map("user_id") @db.Uuid
   deviceId    String   @map("device_id")
   sourceType  String   @map("source_type")
   sender      String
@@ -146,6 +148,9 @@ model Notification {
   // Server clock.
   receivedAt  DateTime @default(now()) @map("received_at")
 
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, receivedAt])
   @@index([deviceId, receivedAt])
   @@map("notifications")
 }

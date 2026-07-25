@@ -26,29 +26,32 @@ export class NotificationsController {
   @HttpCode(HttpStatus.CREATED)
   create(
     @Body() createNotificationDto: CreateNotificationDto,
-    @CurrentUser() _user: AccessTokenPayload,
+    @CurrentUser() user: AccessTokenPayload,
   ): Promise<NotificationRecord> {
-    return this.notificationsService.create(createNotificationDto);
+    return this.notificationsService.create(createNotificationDto, user.sub);
   }
 
   @Get()
   findAll(
-    @CurrentUser() _user: AccessTokenPayload,
+    @CurrentUser() user: AccessTokenPayload,
     @Query('deviceId') deviceId?: string,
     @Query('limit') limit?: string,
   ): Promise<NotificationRecord[]> {
     const parsedLimit = limit ? Math.min(200, Math.max(1, Number(limit))) : 50;
-    return this.notificationsService.findAll(deviceId, parsedLimit);
+    return this.notificationsService.findAll(user.sub, deviceId, parsedLimit);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string): Promise<NotificationRecord> {
-    return this.notificationsService.findOne(id);
+  findOne(
+    @Param('id') id: string,
+    @CurrentUser() user: AccessTokenPayload,
+  ): Promise<NotificationRecord> {
+    return this.notificationsService.findOne(id, user.sub);
   }
 
   @Delete()
   @HttpCode(HttpStatus.NO_CONTENT)
-  clearAll(): Promise<void> {
-    return this.notificationsService.clearAll();
+  clearAll(@CurrentUser() user: AccessTokenPayload): Promise<void> {
+    return this.notificationsService.clearAll(user.sub);
   }
 }

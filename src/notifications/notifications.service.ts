@@ -4,6 +4,7 @@ import { CreateNotificationDto } from './dto/create-notification.dto';
 
 export interface NotificationRecord {
   id: string;
+  userId: string;
   deviceId: string;
   sourceType: string;
   sender: string;
@@ -17,7 +18,7 @@ export interface NotificationRecord {
 export class NotificationsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreateNotificationDto): Promise<NotificationRecord> {
+  async create(dto: CreateNotificationDto, userId: string): Promise<NotificationRecord> {
     // Dedupe by client-supplied id. If we've seen it, return the stored row.
     const existing = await this.prisma.notification.findUnique({
       where: { id: dto.id },
@@ -29,6 +30,7 @@ export class NotificationsService {
     const row = await this.prisma.notification.create({
       data: {
         id: dto.id,
+        userId,
         deviceId: dto.deviceId,
         sourceType: dto.sourceType,
         sender: dto.sender,
@@ -40,29 +42,33 @@ export class NotificationsService {
     return this.toRecord(row);
   }
 
-  async findAll(deviceId?: string, limit = 50): Promise<NotificationRecord[]> {
+  async findAll(userId: string, deviceId?: string, limit = 50): Promise<NotificationRecord[]> {
     const rows = await this.prisma.notification.findMany({
-      where: deviceId ? { deviceId } : undefined,
+      where: {
+        userId,
+        ...(deviceId ? { deviceId } : {}),
+      },
       orderBy: { receivedAt: 'desc' },
       take: limit,
     });
     return rows.map((r) => this.toRecord(r));
   }
 
-  async findOne(id: string): Promise<NotificationRecord> {
+  async findOne(id: string, userId: string): Promise<NotificationRecord> {
     const row = await this.prisma.notification.findUnique({ where: { id } });
-    if (!row) {
+    if (!row || row.userId !== userId) {
       throw new NotFoundException(`Notification ${id} not found`);
     }
     return this.toRecord(row);
   }
 
-  async clearAll(): Promise<void> {
-    await this.prisma.notification.deleteMany();
+  async clearAll(userId: string): Promise<void> {
+    await this.prisma.notification.deleteMany({ where: { userId } });
   }
 
   private toRecord(row: {
     id: string;
+    userId: string;
     deviceId: string;
     sourceType: string;
     sender: string;
@@ -73,6 +79,7 @@ export class NotificationsService {
   }): NotificationRecord {
     return {
       id: row.id,
+      userId: row.userId,
       deviceId: row.deviceId,
       sourceType: row.sourceType,
       sender: row.sender,
