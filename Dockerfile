@@ -16,6 +16,15 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
+# Generate the Prisma client inside the image so the build never depends on
+# host-generated artifacts (prisma/generated is gitignored + dockerignored).
+# `prisma generate` loads prisma.config.ts, which insists on POSTGRES_PASSWORD
+# even though generate never touches a database — feed it a placeholder for
+# this one command only (no ENV, so nothing leaks into later layers).
+COPY prisma.config.ts ./
+COPY prisma ./prisma
+RUN POSTGRES_PASSWORD=build-time-placeholder npx prisma generate
+
 COPY tsconfig*.json nest-cli.json ./
 COPY src ./src
 RUN npm run build
@@ -43,6 +52,9 @@ RUN npm ci --omit=dev
 # Copy compiled output and a small amount of metadata
 COPY --from=builder --chown=app:app /app/dist ./dist
 COPY --from=builder --chown=app:app /app/package.json ./package.json
+# The generated Prisma client (dist/prisma/prisma.service.js requires
+# ../../prisma/generated/client/client → /app/prisma/generated/client/client).
+COPY --from=builder --chown=app:app /app/prisma/generated ./prisma/generated
 
 USER app
 

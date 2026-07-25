@@ -18,3 +18,6 @@ docker-compose*.yml
 !.env.example
 test
 *.tsbuildinfo
+# Always regenerated inside the image (see Dockerfile builder stage) —
+# keeps builds deterministic regardless of host state.
+prisma/generated

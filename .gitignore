@@ -12,6 +12,10 @@
 /build
 /.tsbuildinfo              # TypeScript incremental build cache
 
+# Prisma generated client (rebuilt via `npx prisma generate`; the Docker
+# builder stage regenerates it too, so it is never source-of-truth).
+/prisma/generated
+
 # -----------------------------------------------------------------------------
 # Dependencies
 # -----------------------------------------------------------------------------
