@@ -19,3 +19,9 @@ if (!process.env.DATABASE_URL) {
   // you forgot to mock PrismaService in the test module.
   process.env.DATABASE_URL = 'postgresql://test:test@localhost:5432/test';
 }
+
+if (!process.env.JWT_SECRET) {
+  // 32+ chars to satisfy the zod schema. Only ever signs tokens inside
+  // the test process — never a real secret.
+  process.env.JWT_SECRET = 'test-secret-0123456789abcdef0123456789abcdef';
+}

@@ -19,10 +19,10 @@ const envSchema = z.object({
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])
     .default('info'),
 
-  // Phase 1+ — placeholder so the schema is forward-compatible. Marked optional
-  // until the feature that uses them lands, then flip to required.
-  DATABASE_URL: z.string().url().optional(),
-  JWT_SECRET: z.string().min(32).optional(),
+  // Phase 1 — required since the auth module issues real tokens and every
+  // module reads the DB. The app refuses to boot without them.
+  DATABASE_URL: z.string().url(),
+  JWT_SECRET: z.string().min(32),
   JWT_SECRET_PREVIOUS: z.string().min(32).optional(),
   JWT_ACCESS_TTL_SECONDS: z.coerce.number().int().positive().default(3600),
   JWT_REFRESH_TTL_SECONDS: z.coerce
