@@ -8,12 +8,17 @@ import {
   HttpStatus,
   Query,
   Param,
+  UseGuards,
 } from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
 import type { NotificationRecord } from './notifications.service';
 import { CreateNotificationDto } from './dto/create-notification.dto';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import type { AccessTokenPayload } from '../auth/jwt.service';
 
 @Controller('notifications')
+@UseGuards(JwtAuthGuard)
 export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
 
@@ -21,12 +26,14 @@ export class NotificationsController {
   @HttpCode(HttpStatus.CREATED)
   create(
     @Body() createNotificationDto: CreateNotificationDto,
+    @CurrentUser() _user: AccessTokenPayload,
   ): Promise<NotificationRecord> {
     return this.notificationsService.create(createNotificationDto);
   }
 
   @Get()
   findAll(
+    @CurrentUser() _user: AccessTokenPayload,
     @Query('deviceId') deviceId?: string,
     @Query('limit') limit?: string,
   ): Promise<NotificationRecord[]> {
